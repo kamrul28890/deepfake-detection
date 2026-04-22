@@ -3,13 +3,14 @@ from __future__ import annotations
 import csv
 import io
 import tempfile
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import cv2
 import numpy as np
-from datasets import load_dataset
+from datasets import Video, load_dataset
 from PIL import Image
 
 
@@ -72,6 +73,13 @@ def _decode_video_frame(value: Any, frame_index: int) -> Image.Image:
     else:
         raise TypeError(f"Unsupported video payload type: {type(value)!r}")
 
+    if isinstance(video_path, str) and video_path.startswith("zip://"):
+        member_path, archive_path = video_path.removeprefix("zip://").split("::", maxsplit=1)
+        with zipfile.ZipFile(archive_path) as archive:
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as temp_file:
+                temp_file.write(archive.read(member_path))
+                video_path = temp_file.name
+
     capture = cv2.VideoCapture(video_path)
     if not capture.isOpened():
         raise RuntimeError(f"Unable to open video: {video_path}")
@@ -88,8 +96,30 @@ def _decode_video_frame(value: Any, frame_index: int) -> Image.Image:
     return Image.fromarray(frame)
 
 
+def _source_path(value: Any) -> str:
+    if isinstance(value, dict):
+        return str(value.get("path", ""))
+    if isinstance(value, str):
+        return value
+    return ""
+
+
+def _infer_binary_label_from_path(source_path: str) -> tuple[int, str]:
+    normalized = source_path.replace("\\", "/").lower()
+    parts = normalized.split("/")
+    if "real" in parts:
+        return 0, "real"
+    if "fake" in parts:
+        return 1, "fake"
+    raise KeyError(f"Could not infer real/fake label from source path: {source_path}")
+
+
 def load_dataset_subset(config: DatasetConfig):
     dataset = load_dataset(config.dataset_name, split=config.split)
+    for key in VIDEO_KEYS:
+        if key in dataset.column_names:
+            dataset = dataset.cast_column(key, Video(decode=False))
+            break
     sample_size = min(config.sample_size, len(dataset))
     indices = np.random.default_rng(config.seed).choice(len(dataset), size=sample_size, replace=False)
     return dataset.select(sorted(int(index) for index in indices))
@@ -104,15 +134,13 @@ def prepare_frame_dataset(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     dataset = load_dataset_subset(config)
-    example = dataset[0]
-    image_key = next((key for key in IMAGE_KEYS if key in example), None)
-    video_key = next((key for key in VIDEO_KEYS if key in example), None)
-    label_key = next((key for key in LABEL_KEYS if key in example), None)
-    if label_key is None:
-        raise KeyError(f"Could not infer a label key from example keys: {list(example.keys())}")
+    column_names = set(dataset.column_names)
+    image_key = next((key for key in IMAGE_KEYS if key in column_names), None)
+    video_key = next((key for key in VIDEO_KEYS if key in column_names), None)
+    label_key = next((key for key in LABEL_KEYS if key in column_names), None)
 
     if image_key is None and video_key is None:
-        raise KeyError(f"Could not infer an image/video key from example keys: {list(example.keys())}")
+        raise KeyError(f"Could not infer an image/video key from dataset columns: {dataset.column_names}")
 
     manifest_path = output_dir / "manifest.csv"
     with manifest_path.open("w", newline="", encoding="utf-8") as handle:
@@ -129,18 +157,17 @@ def prepare_frame_dataset(
             else:
                 image = _decode_video_frame(source_value, config.frame_index)
 
-            label_value = row[label_key]
-            label_name = _label_name(dataset.features, label_key, label_value)
+            if label_key is None:
+                label_value, label_name = _infer_binary_label_from_path(_source_path(source_value))
+            else:
+                label_value = row[label_key]
+                label_name = _label_name(dataset.features, label_key, label_value)
             class_dir = output_dir / label_name
             class_dir.mkdir(parents=True, exist_ok=True)
             frame_path = class_dir / f"sample_{index:05d}.png"
             image.save(frame_path)
 
-            source_path = ""
-            if isinstance(source_value, dict):
-                source_path = str(source_value.get("path", ""))
-            elif isinstance(source_value, str):
-                source_path = source_value
+            source_path = _source_path(source_value)
 
             writer.writerow(
                 {

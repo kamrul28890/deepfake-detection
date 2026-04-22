@@ -43,7 +43,10 @@ class Generator(nn.Module):
             nn.ConvTranspose2d(128, 64, 4, 2, 1, bias=False),
             nn.BatchNorm2d(64),
             nn.ReLU(True),
-            nn.ConvTranspose2d(64, image_channels, 4, 2, 1, bias=False),
+            nn.ConvTranspose2d(64, 32, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(32),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(32, image_channels, 4, 2, 1, bias=False),
             nn.Tanh(),
         )
 
@@ -63,7 +66,10 @@ class Discriminator(nn.Module):
             nn.Conv2d(128, 256, 4, 2, 1, bias=False),
             nn.BatchNorm2d(256),
             nn.LeakyReLU(0.2, inplace=True),
-            nn.Conv2d(256, 1, 4, 1, 0, bias=False),
+            nn.Conv2d(256, 512, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(512),
+            nn.LeakyReLU(0.2, inplace=True),
+            nn.Conv2d(512, 1, 4, 1, 0, bias=False),
             nn.Sigmoid(),
         )
 

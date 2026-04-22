@@ -11,7 +11,9 @@ dist/
 .pytest_cache/
 .mypy_cache/
 .cache/
+data/
 artifacts/
+*.pt
 reports/*.aux
 reports/*.log
 reports/*.out

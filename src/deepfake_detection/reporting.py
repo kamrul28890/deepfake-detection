@@ -11,7 +11,15 @@ def _format_metrics_table(rows: list[dict[str, Any]]) -> str:
     frame = pd.DataFrame(rows)
     if "classification_report" in frame.columns:
         frame = frame.drop(columns=["classification_report"])
-    return frame.to_markdown(index=False, floatfmt=".3f")
+    frame = frame.map(lambda value: f"{value:.3f}" if isinstance(value, float) else str(value))
+    headers = list(frame.columns)
+    table = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    for row in frame.itertuples(index=False):
+        table.append("| " + " | ".join(str(value) for value in row) + " |")
+    return "\n".join(table)
 
 
 def write_report(report_path: str | Path, context: dict[str, Any]) -> Path:
